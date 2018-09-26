@@ -29,7 +29,7 @@ import cn.zfs.blelib.util.BleUtils;
  * 作者: zengfansheng
  */
 public abstract class BaseConnection extends BluetoothGattCallback implements IConnection {    
-    private static final int MSG_REQUEST_TIMEOUT = 0;
+    private static final int MSG_REQUEST_TIMEOUT = 0;    
     protected BluetoothDevice bluetoothDevice;
     protected BluetoothGatt bluetoothGatt;
     protected List<Request> requestQueue = new ArrayList<>();
@@ -68,11 +68,13 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     void clearRequestQueueAndNotify() {
-        for (Request request : requestQueue) {
-            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, request.value, false);
-        }
-        if (currentRequest != null) {
-            handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, currentRequest.value, false);
+        synchronized (this) {
+            for (Request request : requestQueue) {
+                handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, request.value, false);
+            }
+            if (currentRequest != null) {
+                handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, currentRequest.value, false);
+            }
         }
         clearRequestQueue();
     }
@@ -238,6 +240,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         }
     }
 
+    
+    
     public void changeMtu(@NonNull String requestId, int mtu) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             enqueue(Request.newChangeMtuRequest(requestId, mtu));
