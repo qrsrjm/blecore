@@ -306,23 +306,25 @@ public class Connection extends BaseConnection {
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    if (refreshing) {
-                        refreshing = false;
-                        bluetoothGatt.close();
-                        bluetoothGatt = null;
-                    }
+                    cancelRefreshState();
                 }
             }, 2000);
         }
         notifyDisconnected();
     }
     
-    private void doConnect() {
+    private void cancelRefreshState() {
         if (refreshing) {
             refreshing = false;
-            bluetoothGatt.close();
-            bluetoothGatt = null;
+            if (bluetoothGatt != null) {
+                bluetoothGatt.close();
+                bluetoothGatt = null;
+            }
         }
+    }
+    
+    private void doConnect() {
+        cancelRefreshState();
         device.connectionState = STATE_CONNECTING;
         sendConnectionCallback();
         Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connecting [name: %s, mac: %s]", device.name, device.addr));
