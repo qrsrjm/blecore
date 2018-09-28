@@ -18,6 +18,7 @@ public class ConnectionConfig implements Cloneable {
 
     long discoverServicesDelayMillis = 500;
     int connectTimeoutMillis = 10000;//连接超时时间
+    int requestTimeoutMillis = 1000;//请求超时时间
     int tryReconnectTimes = TRY_RECONNECT_TIMES_INFINITE;
     int packageWriteDelayMillis;
     int requestWriteDelayMillis = -1;
@@ -180,5 +181,18 @@ public class ConnectionConfig implements Cloneable {
      */
     public void setTransport(int transport) {
         this.transport = transport;
+    }
+
+    public int getRequestTimeoutMillis() {
+        return requestTimeoutMillis;
+    }
+
+    /**
+     * 设置请求超时时间
+     */
+    public void setRequestTimeoutMillis(int requestTimeoutMillis) {
+        if (requestTimeoutMillis > 1000) {
+            this.requestTimeoutMillis = requestTimeoutMillis;
+        }
     }
 }
