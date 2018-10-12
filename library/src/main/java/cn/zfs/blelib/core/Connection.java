@@ -58,7 +58,7 @@ public class Connection extends BaseConnection {
 	    
     private Connection(BluetoothDevice bluetoothDevice, ConnectionConfig config) {
         super(bluetoothDevice, config);
-        handler = new ConnHandler(this);        
+        handler = new ConnHandler(this);
     }
 
     /**
