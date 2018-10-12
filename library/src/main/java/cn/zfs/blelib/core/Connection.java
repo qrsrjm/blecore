@@ -460,20 +460,14 @@ public class Connection extends BaseConnection {
 	
 	@Override
 	public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-        if (isReleased) {
-            gatt.disconnect();
-            gatt.close();
-        } else {
+        if (!isReleased) {
             handler.sendMessage(Message.obtain(handler, MSG_ON_CONNECTION_STATE_CHANGE, status, newState));
-        }	    
+        }    
 	}  
     
 	@Override
 	public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-        if (isReleased) {
-            gatt.disconnect();
-            gatt.close();
-        } else {
+        if (!isReleased) {
             handler.sendMessage(Message.obtain(handler, MSG_ON_SERVICES_DISCOVERED, status, 0));
         }
 	}
