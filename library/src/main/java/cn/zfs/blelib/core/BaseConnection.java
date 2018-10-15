@@ -127,7 +127,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
-                    if (writeFail(characteristic, currentRequest.remainQueue.remove())) {
+                    currentRequest.sendingBytes = currentRequest.remainQueue.remove();
+                    if (writeFail(characteristic, currentRequest.sendingBytes)) {
                         handleWriteFailed(currentRequest);
                     }
                 }
