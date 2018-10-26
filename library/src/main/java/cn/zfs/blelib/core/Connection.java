@@ -293,22 +293,27 @@ public class Connection extends BaseConnection {
         Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "refresh GATT! [name: %s, mac: %s]", device.name, device.addr));
 	    connStartTime = System.currentTimeMillis();//防止刷新过程自动重连
         if (bluetoothGatt != null) {
-            bluetoothGatt.disconnect();
-            refreshing = true;
+            try {
+                bluetoothGatt.disconnect();
+            } catch (Exception ignored) {}
             if (isAuto) {
                 if (refreshTimes <= 5) {
-                    refresh(bluetoothGatt);
+                    refreshing = refresh(bluetoothGatt);
                 }
                 refreshTimes++;
             } else {
-                refresh(bluetoothGatt);
+                refreshing = refresh(bluetoothGatt);
             }
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    cancelRefreshState();
-                }
-            }, 2000);
+            if (refreshing) {
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        cancelRefreshState();
+                    }
+                }, 2000);
+            } else {
+                cancelRefreshState();
+            }
         }
         notifyDisconnected();
     }
@@ -317,7 +322,7 @@ public class Connection extends BaseConnection {
         if (refreshing) {
             refreshing = false;
             if (bluetoothGatt != null) {
-                bluetoothGatt.close();
+                closeGatt(bluetoothGatt);
                 bluetoothGatt = null;
             }
         }
@@ -348,14 +353,12 @@ public class Connection extends BaseConnection {
     private void doDisconnect(boolean reconnect, boolean notify) {
         clearRequestQueueAndNotify();
         if (bluetoothGatt != null) {
-            bluetoothGatt.disconnect();
-            bluetoothGatt.close();
+            closeGatt(bluetoothGatt);
             bluetoothGatt = null;
         }
         device.connectionState = STATE_DISCONNECTED;
         if (isReleased) {//销毁
             device.connectionState = STATE_RELEASED;
-            bluetoothGatt = null;
             handler.removeCallbacksAndMessages(null);
             Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connection released! [name: %s, mac: %s]", device.name, device.addr));
         } else if (reconnect) {
@@ -371,6 +374,15 @@ public class Connection extends BaseConnection {
         if (notify) {
             sendConnectionCallback();
         }
+    }
+    
+    private void closeGatt(BluetoothGatt gatt) {
+        try {
+            gatt.disconnect();
+        } catch (Exception ignored) {}
+        try {
+            gatt.close();
+        } catch (Exception ignored) {}
     }
 
     private void tryScanReconnect() {        

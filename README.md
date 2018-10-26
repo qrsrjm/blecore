@@ -19,7 +19,7 @@ allprojects {
 ```
 dependencies {
 	...
-	implementation 'com.github.fszeng2011:blecore:2.3.18'}
+	implementation 'com.github.fszeng2011:blecore:2.3.24'}
 }
 ```
 
