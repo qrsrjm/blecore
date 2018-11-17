@@ -119,7 +119,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                 Arrays.equals(currentRequest.sendingBytes, characteristic.getValue())) {           
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (currentRequest.remainQueue == null || currentRequest.remainQueue.isEmpty()) {
-                    onCharacteristicWrite(currentRequest.requestId, currentRequest.value);
+                    onCharacteristicWrite(currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value));
                     executeNextRequest();
                 } else {
                     try {
@@ -448,10 +448,10 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                 }
             }
             if (!request.waitWriteResult) {
-                onCharacteristicWrite(request.requestId, request.value);
+                onCharacteristicWrite(request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value));
                 executeNextRequest();
             }
-        } catch (InterruptedException e) {
+        } catch (Exception e) {
             handleWriteFailed(request);
         }
     }

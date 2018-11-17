@@ -62,11 +62,11 @@ public class Events {
      * onCharacteristicWrite，写入成功
      */
     public static class CharacteristicWrite extends BothDeviceAndRequestIdEvent<Device> {
-        public byte[] value;
+        public GattCharacteristic characteristic;
 
-        private CharacteristicWrite(@NonNull Device device, @NonNull String requestId, byte[] value) {
+        private CharacteristicWrite(@NonNull Device device, @NonNull String requestId, @NonNull GattCharacteristic characteristic) {
             super(device, requestId);
-            this.value = value;
+            this.characteristic = characteristic;
         }
     }
 
@@ -246,8 +246,8 @@ public class Events {
         return new CharacteristicRead(device, requestId, characteristic);
     }
 
-    public static CharacteristicWrite newCharacteristicWrite(@NonNull Device device, @NonNull String requestId, byte[] value) {
-        return new CharacteristicWrite(device, requestId, value);
+    public static CharacteristicWrite newCharacteristicWrite(@NonNull Device device, @NonNull String requestId, @NonNull GattCharacteristic characteristic) {
+        return new CharacteristicWrite(device, requestId, characteristic);
     }
 
     public static ConnectFailed newConnectFailed(Device device, int code) {

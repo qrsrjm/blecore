@@ -6,10 +6,10 @@ buildscript {
         minSdkVersion = 19
         targetSdkVersion = 28
 
-        kotlin_version = '1.2.71'
+        kotlin_version = '1.3.10'
         support_lib_version = '28.0.0'
         eventbus_version = '3.1.1'
-        lib_version = '2.3.24'
+        lib_version = '2.3.25'
     }
     
     repositories {
@@ -20,7 +20,7 @@ buildscript {
         classpath 'com.android.tools.build:gradle:3.2.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
         classpath 'com.github.dcendents:android-maven-gradle-plugin:2.0'
-        classpath 'com.novoda:bintray-release:0.8.1'
+        classpath 'com.novoda:bintray-release:0.9'
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
     }

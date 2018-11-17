@@ -540,8 +540,8 @@ public class Connection extends BaseConnection {
     }
 
     @Override
-    public void onCharacteristicWrite(@NonNull String requestId, byte[] value) {
-        Ble.getInstance().postEvent(Events.newCharacteristicWrite(device, requestId, value));
-        Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "write success! [mac: %s, value: %s]", device.addr, getHex(value)));
+    public void onCharacteristicWrite(@NonNull String requestId, GattCharacteristic characteristic) {
+        Ble.getInstance().postEvent(Events.newCharacteristicWrite(device, requestId, characteristic));
+        Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "write success! [mac: %s, value: %s]", device.addr, getHex(characteristic.value)));
     }
 }

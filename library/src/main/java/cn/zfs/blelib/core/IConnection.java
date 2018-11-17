@@ -85,5 +85,5 @@ public interface IConnection {
 
     void onIndicationChanged(@NonNull String requestId, BluetoothGattDescriptor descriptor, boolean isEnabled);
 
-    void onCharacteristicWrite(@NonNull String requestId, byte[] value);
+    void onCharacteristicWrite(@NonNull String requestId, GattCharacteristic characteristic);
 }
