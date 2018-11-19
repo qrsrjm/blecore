@@ -115,8 +115,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     @Override
     public void onCharacteristicWrite(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, final int status) {
-        if (currentRequest != null && currentRequest.waitWriteResult && currentRequest.type == Request.RequestType.WRITE_CHARACTERISTIC &&
-                Arrays.equals(currentRequest.sendingBytes, characteristic.getValue())) {           
+        if (currentRequest != null && currentRequest.waitWriteResult && currentRequest.type == Request.RequestType.WRITE_CHARACTERISTIC) {           
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (currentRequest.remainQueue == null || currentRequest.remainQueue.isEmpty()) {
                     onCharacteristicWrite(currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value));
