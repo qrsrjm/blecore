@@ -122,6 +122,9 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     onCharacteristicWrite(currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value));
                     executeNextRequest();
                 } else {
+                    handler.removeMessages(MSG_REQUEST_TIMEOUT);
+                    Message msg = Message.obtain(handler, MSG_REQUEST_TIMEOUT, currentRequest);
+                    handler.sendMessageDelayed(msg, config.requestTimeoutMillis);
                     try {
                         Thread.sleep(currentRequest.writeDelay);
                     } catch (InterruptedException e) {
@@ -341,7 +344,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     private void executeRequest(Request request) {
-        currentRequest = request;        
+        currentRequest = request;
         Message msg = Message.obtain(handler, MSG_REQUEST_TIMEOUT, request);
         handler.sendMessageDelayed(msg, config.requestTimeoutMillis);
         if (bluetoothAdapter.isEnabled()) {
@@ -457,6 +460,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     private void handleWriteFailed(Request request) {
+        handler.removeMessages(MSG_REQUEST_TIMEOUT);
         request.remainQueue = null;
         handleFaildCallback(request.requestId, Request.RequestType.WRITE_CHARACTERISTIC, REQUEST_FAIL_TYPE_REQUEST_FAILED, request.value, true);
     }

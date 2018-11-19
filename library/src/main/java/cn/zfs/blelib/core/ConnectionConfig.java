@@ -18,7 +18,7 @@ public class ConnectionConfig implements Cloneable {
 
     long discoverServicesDelayMillis = 500;
     int connectTimeoutMillis = 10000;//连接超时时间
-    int requestTimeoutMillis = 1000;//请求超时时间
+    int requestTimeoutMillis = 3000;//请求超时时间
     int tryReconnectTimes = TRY_RECONNECT_TIMES_INFINITE;
     int packageWriteDelayMillis;
     int requestWriteDelayMillis = -1;
