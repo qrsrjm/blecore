@@ -46,10 +46,6 @@ dependencies {
 [http://app.mi.com/details?id=cn.zfs.bledebugger](http://app.mi.com/details?id=cn.zfs.bledebugger "小米应用商店")
 
 
-## 下载APK
-[https://github.com/fszeng2011/bledebugger/release](https://github.com/fszeng2011/bledebugger/release "下载")
-
-
 ## 调试app截图
 ![image](https://github.com/fszeng2011/blecore/blob/master/screenshot/0d12b411b69c21f97460983f0e22280e5ec424032.jpg)
 ![image](https://github.com/fszeng2011/blecore/blob/master/screenshot/0d12b411b69c22f978609b3f0e222b0e5fc424032.jpg)
