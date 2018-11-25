@@ -84,6 +84,57 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         clearRequestQueueAndNotify();
     }
 
+    public BluetoothGatt getBluetoothGatt() {
+        return bluetoothGatt;
+    }
+
+    /**
+     * 获取当前连接的配置
+     */
+    public ConnectionConfig getConfig() {
+        return config;
+    }
+
+    /**
+     * 获取蓝牙服务列表
+     */
+    public List<BluetoothGattService> getGattServices() {
+        if (bluetoothGatt != null) {
+            return bluetoothGatt.getServices();
+        }
+        return new ArrayList<>();
+    }
+    
+    public BluetoothGattService getService(UUID serviceUuid) {
+        if (bluetoothGatt != null) {
+            return bluetoothGatt.getService(serviceUuid);
+        }
+        return null;
+    }
+    
+    public BluetoothGattCharacteristic getCharacteristic(UUID serviceUuid, UUID characteristicUuid) {
+        if (bluetoothGatt != null) {
+            BluetoothGattService service = bluetoothGatt.getService(serviceUuid);
+            if (service != null) {
+                return service.getCharacteristic(characteristicUuid);
+            }
+        }
+        return null;
+    }
+    
+    public BluetoothGattDescriptor getDescriptor(UUID serviceUuid, UUID characteristicUuid, UUID descriptorUuid) {
+        if (bluetoothGatt != null) {
+            BluetoothGattService service = bluetoothGatt.getService(serviceUuid);
+            if (service != null) {
+                BluetoothGattCharacteristic characteristic = service.getCharacteristic(characteristicUuid);
+                if (characteristic != null) {
+                    return characteristic.getDescriptor(descriptorUuid);
+                }
+            }
+        }
+        return null;
+    }
+
     /*
      * Clears the internal cache and forces a refresh of the services from the
      * remote device.
@@ -122,8 +173,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     executeNextRequest();
                 } else {
                     handler.removeMessages(MSG_REQUEST_TIMEOUT);
-                    Message msg = Message.obtain(handler, MSG_REQUEST_TIMEOUT, currentRequest);
-                    handler.sendMessageDelayed(msg, config.requestTimeoutMillis);
+                    handler.sendMessageDelayed(Message.obtain(handler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
                     try {
                         Thread.sleep(currentRequest.writeDelay);
                     } catch (InterruptedException e) {
@@ -344,8 +394,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeRequest(Request request) {
         currentRequest = request;
-        Message msg = Message.obtain(handler, MSG_REQUEST_TIMEOUT, request);
-        handler.sendMessageDelayed(msg, config.requestTimeoutMillis);
+        handler.sendMessageDelayed(Message.obtain(handler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
         if (bluetoothAdapter.isEnabled()) {
             if (bluetoothGatt != null) {
                 switch (request.type) {

@@ -16,7 +16,6 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 
 import java.lang.ref.WeakReference;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -95,27 +94,6 @@ public class Connection extends BaseConnection {
      */
     public Device getDevice() {
         return device;
-    }
-    
-    public BluetoothGatt getBluetoothGatt() {
-        return bluetoothGatt;
-    }
-
-    /**
-     * 获取当前连接的配置
-     */
-    public ConnectionConfig getConfig() {
-        return config;
-    }
-
-    /**
-     * 获取蓝牙服务列表
-     */
-    public List<BluetoothGattService> getGattServices() {
-	    if (bluetoothGatt != null) {
-	        return bluetoothGatt.getServices();
-	    }
-	    return new ArrayList<>();
     }
     
     public synchronized void onScanResult(String addr) {
@@ -341,7 +319,7 @@ public class Connection extends BaseConnection {
                 if (!isReleased) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         bluetoothGatt = bluetoothDevice.connectGatt(context, false, Connection.this,
-                                config.transport == -1 ? BluetoothDevice.TRANSPORT_LE : config.transport);
+                                config.transport == -1 ? BluetoothDevice.TRANSPORT_AUTO : config.transport);
                     } else {
                         bluetoothGatt = bluetoothDevice.connectGatt(context, false, Connection.this);
                     }
