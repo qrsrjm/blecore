@@ -161,7 +161,7 @@ class MainActivity : CheckPermissionsActivity() {
     private fun doStartScan() {
         listAdapter?.clear()
         layoutEmpty.visibility = View.VISIBLE
-        Ble.getInstance().startScan(this)
+        Ble.getInstance().startScan()
     }
 
     private val scanListener = object : ScanListener {
@@ -192,7 +192,7 @@ class MainActivity : CheckPermissionsActivity() {
     }
 
     override fun onDestroy() {    
-        Ble.getInstance().release(this)
+        Ble.getInstance().release()
         super.onDestroy()
         exitProcess(0)
     }

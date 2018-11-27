@@ -374,7 +374,7 @@ public class Connection extends BaseConnection {
                         //开启扫描，扫描到才连接
                         device.connectionState = STATE_SCANNING;
                         Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "scanning [name: %s, mac: %s]", device.name, device.addr));
-                        Ble.getInstance().startScan(context);
+                        Ble.getInstance().startScan();
                     }
                 }
             }, 2000);

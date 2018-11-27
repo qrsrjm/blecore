@@ -26,7 +26,7 @@ class ConnectionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_connection)
         device = intent.getParcelableExtra(Consts.EXTRA_DEVICE)
         Ble.getInstance().registerSubscriber(this)        
-        Ble.getInstance().connect(this, device!!, getConnectionConfig(true), null)        
+        Ble.getInstance().connect(device!!, getConnectionConfig(true), null)        
         tvName.text = device!!.name
         tvAddr.text = device!!.addr
     }
