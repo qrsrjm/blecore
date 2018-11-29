@@ -14,6 +14,7 @@ public class BleConfig {
     private boolean useBluetoothLeScanner = true;
     private boolean acceptSysConnectedDevice;
     private ScanSettings scanSettings;
+    private boolean hideNonBleDevice;
 
     /**
      * 设置扫描过滤器
@@ -86,5 +87,16 @@ public class BleConfig {
     public BleConfig setScanSettings(ScanSettings scanSettings) {
         this.scanSettings = scanSettings;
         return this;
+    }
+
+    public boolean isHideNonBleDevice() {
+        return hideNonBleDevice;
+    }
+
+    /**
+     * 设置是否过滤非BLE设备
+     */
+    public void setHideNonBleDevice(boolean hideNonBleDevice) {
+        this.hideNonBleDevice = hideNonBleDevice;
     }
 }

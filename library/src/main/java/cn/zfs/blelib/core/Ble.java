@@ -435,6 +435,9 @@ public class Ble {
      * @param scanRecord 广播内容
      */
     public void parseScanResult(@NonNull BluetoothDevice device, int rssi, byte[] scanRecord) {
+        if (bleConfig.isHideNonBleDevice() && device.getType() != BluetoothDevice.DEVICE_TYPE_LE) {
+            return;
+        }
         for (Connection connection : connectionMap.values()) {
             connection.onScanResult(device.getAddress());
         }
