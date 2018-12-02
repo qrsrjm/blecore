@@ -146,9 +146,13 @@ public class Ble {
         bluetoothAdapter = bluetoothManager.getAdapter();
         //未初始化过才注册，保证广播注册和取消注册成对
         if (!isInited) {
-            IntentFilter filter = new IntentFilter();
-            filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
-            this.context.registerReceiver(receiver, filter);
+            synchronized (this) {
+                if (!isInited) {
+                    IntentFilter filter = new IntentFilter();
+                    filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+                    this.context.registerReceiver(receiver, filter);
+                }
+            }
         }
         isInited = true;        
         if (callback != null) {            
@@ -177,7 +181,11 @@ public class Ble {
             stopScan();
             scanListeners.clear();
             releaseAllConnections();//释放所有连接
-            context.getApplicationContext().unregisterReceiver(receiver);//取消注册蓝牙状态广播接收者
+            synchronized (this) {
+                if (isInited) {
+                    context.getApplicationContext().unregisterReceiver(receiver);//取消注册蓝牙状态广播接收者
+                }
+            }
             isInited = false;
         }
     }
