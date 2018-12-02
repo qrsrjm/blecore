@@ -43,7 +43,6 @@ public class Connection extends BaseConnection {
     private static final int MSG_ON_CONNECTION_STATE_CHANGE = 8;
     private static final int MSG_ON_SERVICES_DISCOVERED = 9;
     
-	private Device device;
 	private Handler handler;
 	private Context context;
 	private ConnectionStateChangeListener stateChangeListener;
@@ -249,6 +248,9 @@ public class Connection extends BaseConnection {
                             type = TIMEOUT_TYPE_CANNOT_DISCOVER_SERVICES;
                         }
                         Ble.getInstance().postEvent(Events.newConnectTimeout(device, type));
+                        if (stateChangeListener != null) {
+                            stateChangeListener.onConnectTimeout(device, type);
+                        }
                         if (config.autoReconnect && (config.tryReconnectTimes == ConnectionConfig.TRY_RECONNECT_TIMES_INFINITE || tryReconnectTimes < config.tryReconnectTimes)) {
                             doDisconnect(true, true);
                         } else {

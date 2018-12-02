@@ -21,6 +21,9 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import cn.zfs.blelib.callback.CharacteristicChangedCallback;
+import cn.zfs.blelib.callback.RequestCallback;
+import cn.zfs.blelib.event.Events;
 import cn.zfs.blelib.util.BleUtils;
 
 /**
@@ -37,13 +40,15 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     private BluetoothGattCharacteristic pendingCharacteristic;
     protected BluetoothAdapter bluetoothAdapter;
     protected boolean isReleased;
-    private TimeoutHandler handler;
+    private TimeoutHandler timeoutHandler;
     protected ConnectionConfig config;
+    private CharacteristicChangedCallback characteristicChangedCallback;
+    protected Device device;
 
     BaseConnection(BluetoothDevice bluetoothDevice, ConnectionConfig config) {
         this.bluetoothDevice = bluetoothDevice;
         this.config = config;
-        handler = new TimeoutHandler(this);
+        timeoutHandler = new TimeoutHandler(this);
     }
 
     public void clearRequestQueue() {
@@ -51,6 +56,13 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             requestQueue.clear();
             currentRequest = null;
         }
+    }
+
+    /**
+     * 设置设备上报数据回调
+     */
+    public void setCharacteristicChangedCallback(CharacteristicChangedCallback characteristicChangedCallback) {
+        this.characteristicChangedCallback = characteristicChangedCallback;
     }
 
     public void clearRequestQueueByType(Request.RequestType type) {
@@ -70,10 +82,10 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     void clearRequestQueueAndNotify() {
         synchronized (this) {
             for (Request request : requestQueue) {
-                handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, request.value, false);
+                handleFaildCallback(request, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, false);
             }
             if (currentRequest != null) {
-                handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, currentRequest.value, false);
+                handleFaildCallback(currentRequest, REQUEST_FAIL_TYPE_CONNECTION_DISCONNECTED, false);
             }
         }
         clearRequestQueue();
@@ -81,6 +93,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     public void release() {
         isReleased = true;
+        timeoutHandler.removeCallbacksAndMessages(null);
         clearRequestQueueAndNotify();
     }
 
@@ -155,9 +168,13 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         if (currentRequest != null) {
             if (currentRequest.type == Request.RequestType.READ_CHARACTERISTIC) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    onCharacteristicRead(currentRequest.requestId, characteristic);
+                    if (currentRequest.callback != null) {
+                        currentRequest.callback.onSuccess(Events.newCharacteristicRead(device, currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), characteristic.getValue())));
+                    } else {
+                        onCharacteristicRead(currentRequest.requestId, characteristic);
+                    }
                 } else {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 executeNextRequest();
             }
@@ -169,11 +186,16 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         if (currentRequest != null && currentRequest.waitWriteResult && currentRequest.type == Request.RequestType.WRITE_CHARACTERISTIC) {           
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (currentRequest.remainQueue == null || currentRequest.remainQueue.isEmpty()) {
-                    onCharacteristicWrite(currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value));
+                    GattCharacteristic charac = new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value);
+                    if (currentRequest.callback != null) {
+                        currentRequest.callback.onSuccess(Events.newCharacteristicWrite(device, currentRequest.requestId, charac));
+                    } else {
+                        onCharacteristicWrite(currentRequest.requestId, charac);
+                    }
                     executeNextRequest();
                 } else {
-                    handler.removeMessages(MSG_REQUEST_TIMEOUT);
-                    handler.sendMessageDelayed(Message.obtain(handler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
+                    timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+                    timeoutHandler.sendMessageDelayed(Message.obtain(timeoutHandler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
                     try {
                         Thread.sleep(currentRequest.writeDelay);
                     } catch (InterruptedException e) {
@@ -185,7 +207,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     }
                 }
             } else {
-                handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, true);
+                handleFaildCallback(currentRequest, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, true);
             }
         }
     }
@@ -194,6 +216,9 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     public void onCharacteristicChanged(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic) {
         // 收到设备notify值 （设备上报值）
         onCharacteristicChanged(characteristic);
+        if (characteristicChangedCallback != null) {
+            characteristicChangedCallback.onCharacteristicChanged(characteristic);
+        }
     }
 
     @Override
@@ -201,9 +226,13 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         if (currentRequest != null) {
             if (currentRequest.type == Request.RequestType.READ_RSSI) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    onReadRemoteRssi(currentRequest.requestId, rssi);
+                    if (currentRequest.callback != null) {
+                        currentRequest.callback.onSuccess(Events.newRemoteRssiRead(device, currentRequest.requestId, rssi));
+                    } else {
+                        onReadRemoteRssi(currentRequest.requestId, rssi);
+                    }                    
                 } else {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 executeNextRequest();
             }
@@ -216,27 +245,31 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             BluetoothGattCharacteristic characteristic = descriptor.getCharacteristic();
             if (currentRequest.type == Request.RequestType.TOGGLE_NOTIFICATION) {
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 if (characteristic.getService().getUuid().equals(pendingCharacteristic.getService().getUuid()) && characteristic.getUuid().equals(pendingCharacteristic.getUuid())) {
                     if (enableNotificationOrIndicationFail(Arrays.equals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE, currentRequest.value), true, characteristic)) {
-                        handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                        handleGattStatusFailed();
                     }
                 }
             } else if (currentRequest.type == Request.RequestType.TOGGLE_INDICATION) {
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 if (characteristic.getService().getUuid().equals(pendingCharacteristic.getService().getUuid()) && characteristic.getUuid().equals(pendingCharacteristic.getUuid())) {
                     if (enableNotificationOrIndicationFail(Arrays.equals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE, currentRequest.value), false, characteristic)) {
-                        handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                        handleGattStatusFailed();
                     }
                 }
             } else if (currentRequest.type == Request.RequestType.READ_DESCRIPTOR) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    onDescriptorRead(currentRequest.requestId, descriptor);
+                    if (currentRequest.callback != null) {
+                        currentRequest.callback.onSuccess(Events.newDescriptorRead(device, currentRequest.requestId, new GattDescriptor(characteristic.getService().getUuid(), characteristic.getUuid(), descriptor.getUuid(), descriptor.getValue())));
+                    } else {
+                        onDescriptorRead(currentRequest.requestId, descriptor);
+                    }
                 } else {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 executeNextRequest();
             }
@@ -248,23 +281,29 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         if (currentRequest != null) {
             if (currentRequest.type == Request.RequestType.TOGGLE_NOTIFICATION) {
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 } else {
-                    if (Arrays.equals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE, currentRequest.value)) {
-                        onNotificationChanged(currentRequest.requestId, descriptor, true);
+                    boolean isEnabled = Arrays.equals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE, currentRequest.value);
+                    if (currentRequest.callback != null) {
+                        BluetoothGattCharacteristic ch = descriptor.getCharacteristic();
+                        currentRequest.callback.onSuccess(Events.newNotificationChanged(device, currentRequest.requestId, 
+                                new GattDescriptor(ch.getService().getUuid(), ch.getUuid(), descriptor.getUuid(), descriptor.getValue()), isEnabled));
                     } else {
-                        onNotificationChanged(currentRequest.requestId, descriptor, false);
+                        onNotificationChanged(currentRequest.requestId, descriptor, isEnabled);
                     }
                 }
                 executeNextRequest();
             } else if (currentRequest.type == Request.RequestType.TOGGLE_INDICATION) {
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 } else {
-                    if (Arrays.equals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE, currentRequest.value)) {
-                        onIndicationChanged(currentRequest.requestId, descriptor, true);
+                    boolean isEnabled = Arrays.equals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE, currentRequest.value);
+                    if (currentRequest.callback != null) {
+                        BluetoothGattCharacteristic ch = descriptor.getCharacteristic();
+                        currentRequest.callback.onSuccess(Events.newIndicationChanged(device, currentRequest.requestId,
+                                new GattDescriptor(ch.getService().getUuid(), ch.getUuid(), descriptor.getUuid(), descriptor.getValue()), isEnabled));
                     } else {
-                        onIndicationChanged(currentRequest.requestId, descriptor, false);
+                        onIndicationChanged(currentRequest.requestId, descriptor, isEnabled);
                     }
                 }
                 executeNextRequest();
@@ -277,28 +316,63 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         if (currentRequest != null) {
             if (currentRequest.type == Request.RequestType.CHANGE_MTU) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    onMtuChanged(currentRequest.requestId, mtu);
+                    if (currentRequest.callback != null) {
+                        currentRequest.callback.onSuccess(Events.newMtuChanged(device, currentRequest.requestId, mtu));
+                    } else {
+                        onMtuChanged(currentRequest.requestId, mtu);
+                    }
                 } else {
-                    handleFaildCallback(currentRequest.requestId, currentRequest.type, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, currentRequest.value, false);
+                    handleGattStatusFailed();
                 }
                 executeNextRequest();
             }
         }
     }
 
+    //需要保证currentRequest不为空
+    private void handleGattStatusFailed() {
+        handleFaildCallback(currentRequest, REQUEST_FAIL_TYPE_GATT_STATUS_FAILED, false);
+    }
+    
     private void handleFaildCallback(String requestId, Request.RequestType requestType, int failType, byte[] value, boolean executeNext) {
         onRequestFialed(requestId, requestType, failType, value);
         if (executeNext) {
             executeNextRequest();
         }
     }
-
-
-    public void changeMtu(@NonNull String requestId, int mtu) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            enqueue(Request.newChangeMtuRequest(requestId, mtu));
+    
+    private void handleFaildCallback(Request request, int failType, boolean executeNext) {
+        if (request.callback != null) {
+            request.callback.onFail(Events.newRequestFailed(device, request.requestId, request.type, failType, request.value));
         } else {
-            handleFaildCallback(requestId, Request.RequestType.CHANGE_MTU, REQUEST_FAIL_TYPE_API_LEVEL_TOO_LOW, BleUtils.numberToBytes(false, mtu, 4), false);
+            onRequestFialed(request.requestId, request.type, failType, request.value);
+        }
+        if (executeNext) {
+            executeNextRequest();
+        }
+    }
+
+    /**
+     * 改变最大传输单元
+     * @param requestId 请求码
+     * @param mtu 最大传输单元
+     */
+    public void changeMtu(@NonNull String requestId, int mtu) {
+        changeMtu(requestId, mtu, null);
+    }
+
+    /**
+     * 改变最大传输单元
+     * @param requestId 请求码
+     * @param mtu 最大传输单元
+     */
+    public void changeMtu(@NonNull String requestId, int mtu, RequestCallback<Events.MtuChanged> callback) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            enqueue(Request.newChangeMtuRequest(requestId, mtu, callback));
+        } else if (callback != null) {
+            callback.onFail(Events.newRequestFailed(device, requestId, Request.RequestType.CHANGE_MTU, REQUEST_FAIL_TYPE_API_LEVEL_TOO_LOW, BleUtils.numberToBytes(false, mtu, 2)));
+        } else {
+            handleFaildCallback(requestId, Request.RequestType.CHANGE_MTU, REQUEST_FAIL_TYPE_API_LEVEL_TOO_LOW, BleUtils.numberToBytes(false, mtu, 2), false);
         }
     }
 
@@ -307,7 +381,15 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
      * @param requestId 请求码
      */
     public void readCharacteristic(@NonNull String requestId, UUID service, UUID characteristic) {
-        enqueue(Request.newReadCharacteristicRequest(requestId, service, characteristic));
+        readCharacteristic(requestId, service, characteristic, null);
+    }
+
+    /*
+     * 请求读取characteristic的值
+     * @param requestId 请求码
+     */
+    public void readCharacteristic(@NonNull String requestId, UUID service, UUID characteristic, RequestCallback<Events.CharacteristicRead> callback) {
+        enqueue(Request.newReadCharacteristicRequest(requestId, service, characteristic, callback));
     }
 
     /**
@@ -317,6 +399,16 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
      * @param enable    开启还是关闭
      */
     public void toggleNotification(@NonNull String requestId, UUID service, UUID characteristic, boolean enable) {
+        toggleNotification(requestId, service, characteristic, enable, null);
+    }
+
+    /**
+     * 打开Notifications
+     *
+     * @param requestId 请求码
+     * @param enable    开启还是关闭
+     */
+    public void toggleNotification(@NonNull String requestId, UUID service, UUID characteristic, boolean enable, RequestCallback<Events.NotificationChanged> callback) {
         enqueue(Request.newToggleNotificationRequest(requestId, service, characteristic, enable));
     }
 
@@ -324,28 +416,51 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
      * @param enable 开启还是关闭
      */
     public void toggleIndication(@NonNull String requestId, UUID service, UUID characteristic, boolean enable) {
-        enqueue(Request.newToggleIndicationRequest(requestId, service, characteristic, enable));
+        toggleIndication(requestId, service, characteristic, enable, null);
+    }
+
+    /**
+     * @param enable 开启还是关闭
+     */
+    public void toggleIndication(@NonNull String requestId, UUID service, UUID characteristic, boolean enable, RequestCallback<Events.IndicationChanged> callback) {
+        enqueue(Request.newToggleIndicationRequest(requestId, service, characteristic, enable, callback));
     }
 
     public void readDescriptor(@NonNull String requestId, UUID service, UUID characteristic, UUID descriptor) {
-        enqueue(Request.newReadDescriptorRequest(requestId, service, characteristic, descriptor));
+        readDescriptor(requestId, service, characteristic, descriptor, null);
+    }
+
+    public void readDescriptor(@NonNull String requestId, UUID service, UUID characteristic, UUID descriptor, RequestCallback<Events.DescriptorRead> callback) {
+        enqueue(Request.newReadDescriptorRequest(requestId, service, characteristic, descriptor, callback));
     }
 
     public void writeCharacteristic(@NonNull String requestId, UUID service, UUID characteristic, byte[] value) {
+        writeCharacteristic(requestId, service, characteristic, value, null);
+    }
+
+    public void writeCharacteristic(@NonNull String requestId, UUID service, UUID characteristic, byte[] value, RequestCallback<Events.CharacteristicWrite> callback) {
         if (value == null || value.length == 0) {
-            handleFaildCallback(requestId, Request.RequestType.WRITE_CHARACTERISTIC, REQUEST_FAIL_TYPE_VALUE_IS_NULL_OR_EMPTY, value, false);
+            if (callback != null) {
+                callback.onFail(Events.newRequestFailed(device, requestId, Request.RequestType.WRITE_CHARACTERISTIC, REQUEST_FAIL_TYPE_VALUE_IS_NULL_OR_EMPTY, value));
+            } else {
+                handleFaildCallback(requestId, Request.RequestType.WRITE_CHARACTERISTIC, REQUEST_FAIL_TYPE_VALUE_IS_NULL_OR_EMPTY, value, false);
+            }
             return;
         }
-        enqueue(Request.newWriteCharacteristicRequest(requestId, service, characteristic, value));
+        enqueue(Request.newWriteCharacteristicRequest(requestId, service, characteristic, value, callback));
     }
 
     public void readRssi(@NonNull String requestId) {
-        enqueue(Request.newReadRssiRequest(requestId));
+        readRssi(requestId, null);
+    }
+
+    public void readRssi(@NonNull String requestId, RequestCallback<Events.RemoteRssiRead> callback) {
+        enqueue(Request.newReadRssiRequest(requestId, callback));
     }
 
     private void enqueue(Request request) {
         if (isReleased) {
-            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_CONNECTION_RELEASED, request.value, false);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_CONNECTION_RELEASED, false);
         } else {
             synchronized (this) {
                 if (currentRequest == null) {
@@ -359,7 +474,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeNextRequest() {
         synchronized (this) {
-            handler.removeMessages(MSG_REQUEST_TIMEOUT);
+            timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
             if (requestQueue.isEmpty()) {
                 currentRequest = null;
             } else {
@@ -383,7 +498,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     case MSG_REQUEST_TIMEOUT:
                         Request request = (Request) msg.obj;
                         if (connection.currentRequest != null && connection.currentRequest == request) {
-                            connection.handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_REQUEST_TIMEOUT, request.value, false);
+                            connection.handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_TIMEOUT, false);
                             connection.executeNextRequest();
                         }
                         break;
@@ -394,7 +509,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeRequest(Request request) {
         currentRequest = request;
-        handler.sendMessageDelayed(Message.obtain(handler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
+        timeoutHandler.sendMessageDelayed(Message.obtain(timeoutHandler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
         if (bluetoothAdapter.isEnabled()) {
             if (bluetoothGatt != null) {
                 switch (request.type) {
@@ -412,53 +527,53 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                                 switch (request.type) {
                                     case TOGGLE_NOTIFICATION:
                                     case TOGGLE_INDICATION:
-                                        executeIndicationOrNotification(characteristic, request.requestId, request.type, request.value);
+                                        executeIndicationOrNotification(characteristic, request);
                                         break;
                                     case READ_CHARACTERISTIC:
-                                        executeReadCharacteristic(characteristic, request.requestId);
+                                        executeReadCharacteristic(characteristic, request);
                                         break;
                                     case READ_DESCRIPTOR:
-                                        executeReadDescriptor(characteristic, request.descriptor, request.requestId);
+                                        executeReadDescriptor(characteristic, request);
                                         break;
                                     case WRITE_CHARACTERISTIC:
                                         executeWriteCharacteristic(characteristic, request);
                                         break;
                                 }
                             } else {
-                                handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_NULL_CHARACTERISTIC, request.value, true);
+                                handleFaildCallback(request, REQUEST_FAIL_TYPE_NULL_CHARACTERISTIC, true);
                             }
                         } else {
-                            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_NULL_SERVICE, request.value, true);
+                            handleFaildCallback(request, REQUEST_FAIL_TYPE_NULL_SERVICE, true);
                         }
                         break;
                 }
             } else {
-                handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_GATT_IS_NULL, request.value, true);
+                handleFaildCallback(request, REQUEST_FAIL_TYPE_GATT_IS_NULL, true);
             }
         } else {
-            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_BLUETOOTH_ADAPTER_DISABLED, request.value, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_BLUETOOTH_ADAPTER_DISABLED, true);
         }
     }
 
     private void executeChangeMtu(Request request) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             if (!bluetoothGatt.requestMtu((int) BleUtils.bytesToLong(false, request.value))) {
-                handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_REQUEST_FAILED, request.value, true);
+                handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
             }
         } else {
-            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_API_LEVEL_TOO_LOW, request.value, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_API_LEVEL_TOO_LOW, true);
         }
     }
 
     private void executeReadRssi(Request request) {
         if (!bluetoothGatt.readRemoteRssi()) {
-            handleFaildCallback(request.requestId, request.type, REQUEST_FAIL_TYPE_REQUEST_FAILED, request.value, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
         }
     }
 
-    private void executeReadCharacteristic(BluetoothGattCharacteristic characteristic, String requestId) {
+    private void executeReadCharacteristic(BluetoothGattCharacteristic characteristic, Request request) {
         if (!bluetoothGatt.readCharacteristic(characteristic)) {
-            handleFaildCallback(requestId, Request.RequestType.READ_CHARACTERISTIC, REQUEST_FAIL_TYPE_REQUEST_FAILED, null, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
         }
     }
 
@@ -499,7 +614,11 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                 }
             }
             if (!request.waitWriteResult) {
-                onCharacteristicWrite(request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value));
+                if (request.callback != null) {
+                    request.callback.onSuccess(Events.newCharacteristicWrite(device, request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value)));
+                } else {
+                    onCharacteristicWrite(request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value));
+                }
                 executeNextRequest();
             }
         } catch (Exception e) {
@@ -508,9 +627,9 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     private void handleWriteFailed(Request request) {
-        handler.removeMessages(MSG_REQUEST_TIMEOUT);
+        timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
         request.remainQueue = null;
-        handleFaildCallback(request.requestId, Request.RequestType.WRITE_CHARACTERISTIC, REQUEST_FAIL_TYPE_REQUEST_FAILED, request.value, true);
+        handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
     }
 
     private boolean writeFail(BluetoothGattCharacteristic characteristic, byte[] value) {
@@ -523,22 +642,22 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         return !bluetoothGatt.writeCharacteristic(characteristic);
     }
 
-    private void executeReadDescriptor(BluetoothGattCharacteristic characteristic, UUID descriptor, String requestId) {
-        BluetoothGattDescriptor gattDescriptor = characteristic.getDescriptor(descriptor);
+    private void executeReadDescriptor(BluetoothGattCharacteristic characteristic, Request request) {
+        BluetoothGattDescriptor gattDescriptor = characteristic.getDescriptor(request.descriptor);
         if (gattDescriptor != null) {
             if (!bluetoothGatt.readDescriptor(gattDescriptor)) {
-                handleFaildCallback(requestId, Request.RequestType.READ_DESCRIPTOR, REQUEST_FAIL_TYPE_REQUEST_FAILED, null, true);
+                handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
             }
         } else {
-            handleFaildCallback(requestId, Request.RequestType.READ_DESCRIPTOR, REQUEST_FAIL_TYPE_NULL_DESCRIPTOR, null, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_NULL_DESCRIPTOR, true);
         }
     }
 
-    private void executeIndicationOrNotification(BluetoothGattCharacteristic characteristic, String requestId, Request.RequestType requestType, byte[] value) {
+    private void executeIndicationOrNotification(BluetoothGattCharacteristic characteristic, Request request) {
         pendingCharacteristic = characteristic;
         BluetoothGattDescriptor gattDescriptor = pendingCharacteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG);
         if (gattDescriptor == null || !bluetoothGatt.readDescriptor(gattDescriptor)) {
-            handleFaildCallback(requestId, requestType, REQUEST_FAIL_TYPE_REQUEST_FAILED, value, true);
+            handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
         }
     }
 

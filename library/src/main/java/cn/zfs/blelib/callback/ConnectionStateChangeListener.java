@@ -25,4 +25,11 @@ public interface ConnectionStateChangeListener {
      * @param type 失败类型。<br>{@link Connection#CONNECT_FAIL_TYPE_MAXIMUM_RECONNECTION}<br> {@link Connection#CONNECT_FAIL_TYPE_UNSPECIFIED_MAC_ADDRESS}
      */
     void onConnectFailed(@NonNull Device device, int type);
+
+    /**
+     * 连接超时
+     * @param type 超时类型。<br>{@link Connection#TIMEOUT_TYPE_CANNOT_DISCOVER_DEVICE}<br>{@link Connection#TIMEOUT_TYPE_CANNOT_CONNECT}<br>
+     *          {@link Connection#TIMEOUT_TYPE_CANNOT_DISCOVER_SERVICES}
+     */
+    void onConnectTimeout(@NonNull Device device, int type);
 }
