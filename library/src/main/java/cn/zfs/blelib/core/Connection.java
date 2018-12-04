@@ -9,13 +9,10 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.Message;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
-import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.Locale;
 
@@ -33,17 +30,6 @@ public class Connection extends BaseConnection {
     private static final int MSG_ARG_RECONNECT = 1;
     private static final int MSG_ARG_NOTIFY = 2;
     
-    private static final int MSG_CONNECT = 1;
-    private static final int MSG_DISCONNECT = 2;
-    private static final int MSG_REFRESH= 3;
-    private static final int MSG_AUTO_REFRESH = 4;
-    private static final int MSG_TIMER = 5;
-    private static final int MSG_RELEASE = 6;
-    private static final int MSG_DISCOVER_SERVICES = 7;
-    private static final int MSG_ON_CONNECTION_STATE_CHANGE = 8;
-    private static final int MSG_ON_SERVICES_DISCOVERED = 9;
-    
-	private Handler handler;
 	private Context context;
 	private ConnectionStateChangeListener stateChangeListener;
 	private long connStartTime;
@@ -56,7 +42,6 @@ public class Connection extends BaseConnection {
 	    
     private Connection(BluetoothDevice bluetoothDevice, ConnectionConfig config) {
         super(bluetoothDevice, config);
-        handler = new ConnHandler(this);
     }
 
     /**
@@ -83,8 +68,8 @@ public class Connection extends BaseConnection {
         conn.stateChangeListener = stateChangeListener;
         //连接蓝牙设备
         conn.connStartTime = System.currentTimeMillis();
-        conn.handler.sendEmptyMessageDelayed(MSG_CONNECT, connectDelay);//连接
-        conn.handler.sendEmptyMessageDelayed(MSG_TIMER, connectDelay);//启动定时器，用于断线重连
+        conn.mainHandler.sendEmptyMessageDelayed(MSG_CONNECT, connectDelay);//连接
+        conn.mainHandler.sendEmptyMessageDelayed(MSG_TIMER, connectDelay);//启动定时器，用于断线重连
         return conn;
     }
 
@@ -95,64 +80,54 @@ public class Connection extends BaseConnection {
         return device;
     }
     
-    public synchronized void onScanResult(String addr) {
+    synchronized void onScanResult(String addr) {
 	    if (!isReleased && device.addr.equals(addr) && device.connectionState == STATE_SCANNING) {
-            handler.sendEmptyMessage(MSG_CONNECT);
+            mainHandler.sendEmptyMessage(MSG_CONNECT);
 	    }
     }
 
-    private static class ConnHandler extends Handler {
-        private WeakReference<Connection> ref;
-
-        ConnHandler(Connection conn) {
-            super(Looper.getMainLooper());
-            ref = new WeakReference<>(conn);
+    @Override
+    protected void handleMsg(Message msg) {
+        if (isReleased && msg.what != MSG_RELEASE) {
+            return;
         }
-
-        @Override
-        public void handleMessage(Message msg) {
-            Connection conn = ref.get();
-            if (conn == null || (conn.isReleased && msg.what != MSG_RELEASE)) {
-                return;
-            }
-            switch(msg.what) {
-                case MSG_CONNECT://连接
-                    if (conn.bluetoothAdapter.isEnabled()) {
-                        conn.doConnect();
-                    }
-                    break;
-                case MSG_DISCONNECT://处理断开
-                    conn.doDisconnect(msg.arg1 == MSG_ARG_RECONNECT && conn.bluetoothAdapter.isEnabled(), true);
-                    break;
-                case MSG_REFRESH://手动刷新
-                    conn.doRefresh(false);
-                    break;
-                case MSG_AUTO_REFRESH://自动刷新
-                    conn.doRefresh(true);
-                    break;
-                case MSG_RELEASE://销毁连接
-                    conn.config.autoReconnect = false;//停止重连
-                    conn.doDisconnect(false, msg.arg1 == MSG_ARG_NOTIFY);
-                    break;
-                case MSG_TIMER://定时器
-                    conn.doTimer();
-                    break;
-                case MSG_DISCOVER_SERVICES://开始发现服务
-                case MSG_ON_CONNECTION_STATE_CHANGE://连接状态变化
-                case MSG_ON_SERVICES_DISCOVERED://发现服务
-                    if (conn.bluetoothAdapter.isEnabled()) {
-                        if (msg.what == MSG_DISCOVER_SERVICES) {
-                            conn.doDiscoverServices();
+        switch(msg.what) {
+            case MSG_CONNECT://连接
+                if (bluetoothAdapter.isEnabled()) {
+                    doConnect();
+                }
+                break;
+            case MSG_DISCONNECT://处理断开
+                doDisconnect(msg.arg1 == MSG_ARG_RECONNECT && bluetoothAdapter.isEnabled(), true);
+                break;
+            case MSG_REFRESH://手动刷新
+                doRefresh(false);
+                break;
+            case MSG_AUTO_REFRESH://自动刷新
+                doRefresh(true);
+                break;
+            case MSG_RELEASE://销毁连接
+                config.autoReconnect = false;//停止重连
+                doDisconnect(false, msg.arg1 == MSG_ARG_NOTIFY);
+                break;
+            case MSG_TIMER://定时器
+                doTimer();
+                break;
+            case MSG_DISCOVER_SERVICES://开始发现服务
+            case MSG_ON_CONNECTION_STATE_CHANGE://连接状态变化
+            case MSG_ON_SERVICES_DISCOVERED://发现服务
+                if (bluetoothAdapter.isEnabled()) {
+                    if (msg.what == MSG_DISCOVER_SERVICES) {
+                        doDiscoverServices();
+                    } else {
+                        if (msg.what == MSG_ON_SERVICES_DISCOVERED) {
+                            doOnServicesDiscovered(msg.arg1);
                         } else {
-                            if (msg.what == MSG_ON_SERVICES_DISCOVERED) {
-                                conn.doOnServicesDiscovered(msg.arg1);
-                            } else {
-                                conn.doOnConnectionStateChange(msg.arg1, msg.arg2);
-                            }                            
+                            doOnConnectionStateChange(msg.arg1, msg.arg2);
                         }
                     }
-                    break;
-            }
+                }
+                break;
         }
     }
         
@@ -177,7 +152,7 @@ public class Connection extends BaseConnection {
                     device.connectionState = STATE_CONNECTED;
                     sendConnectionCallback();
                     // 进行服务发现，延时
-                    handler.sendEmptyMessageDelayed(MSG_DISCOVER_SERVICES, config.discoverServicesDelayMillis);
+                    mainHandler.sendEmptyMessageDelayed(MSG_DISCOVER_SERVICES, config.discoverServicesDelayMillis);
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "disconnected! [name: %s, mac: %s, autoReconnEnable: %s]",
                             bluetoothGatt.getDevice().getName(), bluetoothGatt.getDevice().getAddress(), String.valueOf(config.autoReconnect)));
@@ -264,7 +239,7 @@ public class Connection extends BaseConnection {
                     doDisconnect(true, true);
                 }
             }
-            handler.sendEmptyMessageDelayed(MSG_TIMER, 500);            
+            mainHandler.sendEmptyMessageDelayed(MSG_TIMER, 500);            
         }
     }
         
@@ -285,7 +260,7 @@ public class Connection extends BaseConnection {
                 refreshing = refresh(bluetoothGatt);
             }
             if (refreshing) {
-                handler.postDelayed(new Runnable() {
+                mainHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
                         cancelRefreshState();
@@ -315,7 +290,7 @@ public class Connection extends BaseConnection {
         Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connecting [name: %s, mac: %s]", device.name, device.addr));
         //连接时需要停止蓝牙扫描
         Ble.getInstance().stopScan();
-        handler.postDelayed(new Runnable() {
+        mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!isReleased) {
@@ -339,7 +314,7 @@ public class Connection extends BaseConnection {
         device.connectionState = STATE_DISCONNECTED;
         if (isReleased) {//销毁
             device.connectionState = STATE_RELEASED;
-            handler.removeCallbacksAndMessages(null);
+            mainHandler.removeCallbacksAndMessages(null);
             Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connection released! [name: %s, mac: %s]", device.name, device.addr));
         } else if (reconnect) {
             tryReconnectTimes++;
@@ -369,7 +344,7 @@ public class Connection extends BaseConnection {
         if (!isReleased) {
             connStartTime = System.currentTimeMillis();
             Ble.getInstance().stopScan();
-            handler.postDelayed(new Runnable() {
+            mainHandler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     if (!isReleased) {
@@ -411,14 +386,14 @@ public class Connection extends BaseConnection {
 	        isActiveDisconnect = false;
             tryReconnectTimes = 0;
             reconnectImmediatelyCount = 0;
-            Message.obtain(handler, MSG_DISCONNECT, MSG_ARG_RECONNECT, 0).sendToTarget();
+            Message.obtain(mainHandler, MSG_DISCONNECT, MSG_ARG_RECONNECT, 0).sendToTarget();
 	    }
 	}
 
     public void disconnect() {
         if (!isReleased) {
             isActiveDisconnect = true;
-            Message.obtain(handler, MSG_DISCONNECT, MSG_ARG_NONE, 0).sendToTarget();
+            Message.obtain(mainHandler, MSG_DISCONNECT, MSG_ARG_NONE, 0).sendToTarget();
         }
 	}
 	
@@ -426,7 +401,7 @@ public class Connection extends BaseConnection {
      * 清理缓存
      */
     public void refresh() {
-        handler.sendEmptyMessage(MSG_REFRESH);
+        mainHandler.sendEmptyMessage(MSG_REFRESH);
     }
     
 	/**
@@ -435,7 +410,7 @@ public class Connection extends BaseConnection {
 	@Override
 	public void release() {
 	    super.release();
-        Message.obtain(handler, MSG_RELEASE, MSG_ARG_NOTIFY, 0).sendToTarget();
+        Message.obtain(mainHandler, MSG_RELEASE, MSG_ARG_NOTIFY, 0).sendToTarget();
 	}
 
     /**
@@ -443,7 +418,7 @@ public class Connection extends BaseConnection {
      */
     public void releaseNoEvnet() {
         super.release();
-        Message.obtain(handler, MSG_RELEASE, MSG_ARG_NONE, 0).sendToTarget();
+        Message.obtain(mainHandler, MSG_RELEASE, MSG_ARG_NONE, 0).sendToTarget();
     }
 	
     public int getConnctionState() {
@@ -453,14 +428,14 @@ public class Connection extends BaseConnection {
 	@Override
 	public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
         if (!isReleased) {
-            handler.sendMessage(Message.obtain(handler, MSG_ON_CONNECTION_STATE_CHANGE, status, newState));
+            mainHandler.sendMessage(Message.obtain(mainHandler, MSG_ON_CONNECTION_STATE_CHANGE, status, newState));
         }    
 	}  
     
 	@Override
 	public void onServicesDiscovered(BluetoothGatt gatt, int status) {
         if (!isReleased) {
-            handler.sendMessage(Message.obtain(handler, MSG_ON_SERVICES_DISCOVERED, status, 0));
+            mainHandler.sendMessage(Message.obtain(mainHandler, MSG_ON_SERVICES_DISCOVERED, status, 0));
         }
 	}
 

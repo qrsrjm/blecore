@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.support.annotation.NonNull;
 
@@ -20,6 +21,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import cn.zfs.blelib.callback.CharacteristicChangedCallback;
 import cn.zfs.blelib.callback.RequestCallback;
@@ -33,6 +36,16 @@ import cn.zfs.blelib.util.BleUtils;
  */
 public abstract class BaseConnection extends BluetoothGattCallback implements IConnection {
     private static final int MSG_REQUEST_TIMEOUT = 0;
+    protected static final int MSG_CONNECT = 1;
+    protected static final int MSG_DISCONNECT = 2;
+    protected static final int MSG_REFRESH= 3;
+    protected static final int MSG_AUTO_REFRESH = 4;
+    protected static final int MSG_TIMER = 5;
+    protected static final int MSG_RELEASE = 6;
+    protected static final int MSG_DISCOVER_SERVICES = 7;
+    protected static final int MSG_ON_CONNECTION_STATE_CHANGE = 8;
+    protected static final int MSG_ON_SERVICES_DISCOVERED = 9;
+    
     protected BluetoothDevice bluetoothDevice;
     protected BluetoothGatt bluetoothGatt;
     protected List<Request> requestQueue = new ArrayList<>();
@@ -40,15 +53,17 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     private BluetoothGattCharacteristic pendingCharacteristic;
     protected BluetoothAdapter bluetoothAdapter;
     protected boolean isReleased;
-    private TimeoutHandler timeoutHandler;
+    protected Handler mainHandler;
     protected ConnectionConfig config;
     private CharacteristicChangedCallback characteristicChangedCallback;
     protected Device device;
+    private ExecutorService executorService;
 
     BaseConnection(BluetoothDevice bluetoothDevice, ConnectionConfig config) {
         this.bluetoothDevice = bluetoothDevice;
         this.config = config;
-        timeoutHandler = new TimeoutHandler(this);
+        mainHandler = new ConnHandler(this);
+        executorService = Executors.newCachedThreadPool();
     }
 
     public void clearRequestQueue() {
@@ -93,7 +108,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     public void release() {
         isReleased = true;
-        timeoutHandler.removeCallbacksAndMessages(null);
+        mainHandler.removeCallbacksAndMessages(null);
         clearRequestQueueAndNotify();
     }
 
@@ -169,7 +184,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             if (currentRequest.type == Request.RequestType.READ_CHARACTERISTIC) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     if (currentRequest.callback != null) {
-                        currentRequest.callback.onSuccess(Events.newCharacteristicRead(device, currentRequest.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), characteristic.getValue())));
+                        handleRequestCallback(currentRequest.callback, Events.newCharacteristicRead(device, currentRequest.requestId, 
+                                new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), characteristic.getValue())));
                     } else {
                         onCharacteristicRead(currentRequest.requestId, characteristic);
                     }
@@ -188,14 +204,14 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                 if (currentRequest.remainQueue == null || currentRequest.remainQueue.isEmpty()) {
                     GattCharacteristic charac = new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), currentRequest.value);
                     if (currentRequest.callback != null) {
-                        currentRequest.callback.onSuccess(Events.newCharacteristicWrite(device, currentRequest.requestId, charac));
+                        handleRequestCallback(currentRequest.callback, Events.newCharacteristicWrite(device, currentRequest.requestId, charac));
                     } else {
                         onCharacteristicWrite(currentRequest.requestId, charac);
                     }
                     executeNextRequest();
                 } else {
-                    timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
-                    timeoutHandler.sendMessageDelayed(Message.obtain(timeoutHandler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
+                    mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+                    mainHandler.sendMessageDelayed(Message.obtain(mainHandler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
                     try {
                         Thread.sleep(currentRequest.writeDelay);
                     } catch (InterruptedException e) {
@@ -227,7 +243,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             if (currentRequest.type == Request.RequestType.READ_RSSI) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     if (currentRequest.callback != null) {
-                        currentRequest.callback.onSuccess(Events.newRemoteRssiRead(device, currentRequest.requestId, rssi));
+                        handleRequestCallback(currentRequest.callback, Events.newRemoteRssiRead(device, currentRequest.requestId, rssi));
                     } else {
                         onReadRemoteRssi(currentRequest.requestId, rssi);
                     }                    
@@ -264,7 +280,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             } else if (currentRequest.type == Request.RequestType.READ_DESCRIPTOR) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     if (currentRequest.callback != null) {
-                        currentRequest.callback.onSuccess(Events.newDescriptorRead(device, currentRequest.requestId, new GattDescriptor(characteristic.getService().getUuid(), characteristic.getUuid(), descriptor.getUuid(), descriptor.getValue())));
+                        handleRequestCallback(currentRequest.callback, Events.newDescriptorRead(device, currentRequest.requestId, 
+                                new GattDescriptor(characteristic.getService().getUuid(), characteristic.getUuid(), descriptor.getUuid(), descriptor.getValue())));
                     } else {
                         onDescriptorRead(currentRequest.requestId, descriptor);
                     }
@@ -286,7 +303,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     boolean isEnabled = Arrays.equals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE, currentRequest.value);
                     if (currentRequest.callback != null) {
                         BluetoothGattCharacteristic ch = descriptor.getCharacteristic();
-                        currentRequest.callback.onSuccess(Events.newNotificationChanged(device, currentRequest.requestId, 
+                        handleRequestCallback(currentRequest.callback, Events.newNotificationChanged(device, currentRequest.requestId, 
                                 new GattDescriptor(ch.getService().getUuid(), ch.getUuid(), descriptor.getUuid(), descriptor.getValue()), isEnabled));
                     } else {
                         onNotificationChanged(currentRequest.requestId, descriptor, isEnabled);
@@ -300,7 +317,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     boolean isEnabled = Arrays.equals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE, currentRequest.value);
                     if (currentRequest.callback != null) {
                         BluetoothGattCharacteristic ch = descriptor.getCharacteristic();
-                        currentRequest.callback.onSuccess(Events.newIndicationChanged(device, currentRequest.requestId,
+                        handleRequestCallback(currentRequest.callback, Events.newIndicationChanged(device, currentRequest.requestId,
                                 new GattDescriptor(ch.getService().getUuid(), ch.getUuid(), descriptor.getUuid(), descriptor.getValue()), isEnabled));
                     } else {
                         onIndicationChanged(currentRequest.requestId, descriptor, isEnabled);
@@ -317,7 +334,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             if (currentRequest.type == Request.RequestType.CHANGE_MTU) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     if (currentRequest.callback != null) {
-                        currentRequest.callback.onSuccess(Events.newMtuChanged(device, currentRequest.requestId, mtu));
+                        handleRequestCallback(currentRequest.callback, Events.newMtuChanged(device, currentRequest.requestId, mtu));
                     } else {
                         onMtuChanged(currentRequest.requestId, mtu);
                     }
@@ -343,12 +360,39 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     
     private void handleFaildCallback(Request request, int failType, boolean executeNext) {
         if (request.callback != null) {
-            request.callback.onFail(Events.newRequestFailed(device, request.requestId, request.type, failType, request.value));
+            handleRequestCallback(request.callback, Events.newRequestFailed(device, request.requestId, request.type, failType, request.value));
         } else {
             onRequestFialed(request.requestId, request.type, failType, request.value);
         }
         if (executeNext) {
             executeNextRequest();
+        }
+    }
+    
+    @SuppressWarnings("unchecked")
+    private void handleRequestCallback(final RequestCallback callback, final Object param) {
+        Method[] methods = callback.getClass().getMethods();
+        for (Method method : methods) {
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if (parameterTypes.length == 1 && parameterTypes[0].isAssignableFrom(param.getClass())) {
+                RunInUiThread threadAnnotation = method.getAnnotation(RunInUiThread.class);
+                Runnable runnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        if (param instanceof Events.RequestFailed) {
+                            callback.onFail((Events.RequestFailed) param);
+                        } else {
+                            callback.onSuccess(param);
+                        }
+                    }
+                };
+                if (threadAnnotation != null) {
+                    mainHandler.post(runnable);
+                } else {
+                    executorService.execute(runnable);
+                }
+                break;
+            }
         }
     }
 
@@ -474,7 +518,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeNextRequest() {
         synchronized (this) {
-            timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+            mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
             if (requestQueue.isEmpty()) {
                 currentRequest = null;
             } else {
@@ -483,10 +527,11 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         }
     }
 
-    private static class TimeoutHandler extends Handler {
+    private static class ConnHandler extends Handler {
         private WeakReference<BaseConnection> weakRef;
 
-        TimeoutHandler(BaseConnection connection) {
+        ConnHandler(BaseConnection connection) {
+            super(Looper.getMainLooper());
             weakRef = new WeakReference<>(connection);
         }
 
@@ -503,13 +548,16 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                         }
                         break;
                 }
+                connection.handleMsg(msg);
             }
         }
     }
+    
+    protected abstract void handleMsg(Message msg);
 
     private void executeRequest(Request request) {
         currentRequest = request;
-        timeoutHandler.sendMessageDelayed(Message.obtain(timeoutHandler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
+        mainHandler.sendMessageDelayed(Message.obtain(mainHandler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
         if (bluetoothAdapter.isEnabled()) {
             if (bluetoothGatt != null) {
                 switch (request.type) {
@@ -615,7 +663,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             }
             if (!request.waitWriteResult) {
                 if (request.callback != null) {
-                    request.callback.onSuccess(Events.newCharacteristicWrite(device, request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value)));
+                    handleRequestCallback(request.callback, Events.newCharacteristicWrite(device, request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value)));
                 } else {
                     onCharacteristicWrite(request.requestId, new GattCharacteristic(characteristic.getService().getUuid(), characteristic.getUuid(), request.value));
                 }
@@ -627,7 +675,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     private void handleWriteFailed(Request request) {
-        timeoutHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+        mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
         request.remainQueue = null;
         handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
     }
