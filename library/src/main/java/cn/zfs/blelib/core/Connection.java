@@ -68,8 +68,8 @@ public class Connection extends BaseConnection {
         conn.stateChangeListener = stateChangeListener;
         //连接蓝牙设备
         conn.connStartTime = System.currentTimeMillis();
-        conn.mainHandler.sendEmptyMessageDelayed(MSG_CONNECT, connectDelay);//连接
-        conn.mainHandler.sendEmptyMessageDelayed(MSG_TIMER, connectDelay);//启动定时器，用于断线重连
+        conn.connHandler.sendEmptyMessageDelayed(MSG_CONNECT, connectDelay);//连接
+        conn.connHandler.sendEmptyMessageDelayed(MSG_TIMER, connectDelay);//启动定时器，用于断线重连
         return conn;
     }
 
@@ -82,7 +82,7 @@ public class Connection extends BaseConnection {
     
     synchronized void onScanResult(String addr) {
 	    if (!isReleased && device.addr.equals(addr) && device.connectionState == STATE_SCANNING) {
-            mainHandler.sendEmptyMessage(MSG_CONNECT);
+            connHandler.sendEmptyMessage(MSG_CONNECT);
 	    }
     }
 
@@ -152,7 +152,7 @@ public class Connection extends BaseConnection {
                     device.connectionState = STATE_CONNECTED;
                     sendConnectionCallback();
                     // 进行服务发现，延时
-                    mainHandler.sendEmptyMessageDelayed(MSG_DISCOVER_SERVICES, config.discoverServicesDelayMillis);
+                    connHandler.sendEmptyMessageDelayed(MSG_DISCOVER_SERVICES, config.discoverServicesDelayMillis);
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "disconnected! [name: %s, mac: %s, autoReconnEnable: %s]",
                             bluetoothGatt.getDevice().getName(), bluetoothGatt.getDevice().getAddress(), String.valueOf(config.autoReconnect)));
@@ -239,7 +239,7 @@ public class Connection extends BaseConnection {
                     doDisconnect(true, true);
                 }
             }
-            mainHandler.sendEmptyMessageDelayed(MSG_TIMER, 500);            
+            connHandler.sendEmptyMessageDelayed(MSG_TIMER, 500);            
         }
     }
         
@@ -260,7 +260,7 @@ public class Connection extends BaseConnection {
                 refreshing = refresh(bluetoothGatt);
             }
             if (refreshing) {
-                mainHandler.postDelayed(new Runnable() {
+                connHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
                         cancelRefreshState();
@@ -290,7 +290,7 @@ public class Connection extends BaseConnection {
         Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connecting [name: %s, mac: %s]", device.name, device.addr));
         //连接时需要停止蓝牙扫描
         Ble.getInstance().stopScan();
-        mainHandler.postDelayed(new Runnable() {
+        connHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!isReleased) {
@@ -314,7 +314,7 @@ public class Connection extends BaseConnection {
         device.connectionState = STATE_DISCONNECTED;
         if (isReleased) {//销毁
             device.connectionState = STATE_RELEASED;
-            mainHandler.removeCallbacksAndMessages(null);
+            super.release();
             Ble.println(Connection.class, Log.DEBUG, String.format(Locale.US, "connection released! [name: %s, mac: %s]", device.name, device.addr));
         } else if (reconnect) {
             tryReconnectTimes++;
@@ -344,7 +344,7 @@ public class Connection extends BaseConnection {
         if (!isReleased) {
             connStartTime = System.currentTimeMillis();
             Ble.getInstance().stopScan();
-            mainHandler.postDelayed(new Runnable() {
+            connHandler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     if (!isReleased) {
@@ -386,14 +386,14 @@ public class Connection extends BaseConnection {
 	        isActiveDisconnect = false;
             tryReconnectTimes = 0;
             reconnectImmediatelyCount = 0;
-            Message.obtain(mainHandler, MSG_DISCONNECT, MSG_ARG_RECONNECT, 0).sendToTarget();
+            Message.obtain(connHandler, MSG_DISCONNECT, MSG_ARG_RECONNECT, 0).sendToTarget();
 	    }
 	}
 
     public void disconnect() {
         if (!isReleased) {
             isActiveDisconnect = true;
-            Message.obtain(mainHandler, MSG_DISCONNECT, MSG_ARG_NONE, 0).sendToTarget();
+            Message.obtain(connHandler, MSG_DISCONNECT, MSG_ARG_NONE, 0).sendToTarget();
         }
 	}
 	
@@ -401,7 +401,7 @@ public class Connection extends BaseConnection {
      * 清理缓存
      */
     public void refresh() {
-        mainHandler.sendEmptyMessage(MSG_REFRESH);
+        connHandler.sendEmptyMessage(MSG_REFRESH);
     }
     
 	/**
@@ -410,7 +410,7 @@ public class Connection extends BaseConnection {
 	@Override
 	public void release() {
 	    super.release();
-        Message.obtain(mainHandler, MSG_RELEASE, MSG_ARG_NOTIFY, 0).sendToTarget();
+        Message.obtain(connHandler, MSG_RELEASE, MSG_ARG_NOTIFY, 0).sendToTarget();
 	}
 
     /**
@@ -418,7 +418,7 @@ public class Connection extends BaseConnection {
      */
     public void releaseNoEvnet() {
         super.release();
-        Message.obtain(mainHandler, MSG_RELEASE, MSG_ARG_NONE, 0).sendToTarget();
+        Message.obtain(connHandler, MSG_RELEASE, MSG_ARG_NONE, 0).sendToTarget();
     }
 	
     public int getConnctionState() {
@@ -428,14 +428,14 @@ public class Connection extends BaseConnection {
 	@Override
 	public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
         if (!isReleased) {
-            mainHandler.sendMessage(Message.obtain(mainHandler, MSG_ON_CONNECTION_STATE_CHANGE, status, newState));
+            connHandler.sendMessage(Message.obtain(connHandler, MSG_ON_CONNECTION_STATE_CHANGE, status, newState));
         }    
 	}  
     
 	@Override
 	public void onServicesDiscovered(BluetoothGatt gatt, int status) {
         if (!isReleased) {
-            mainHandler.sendMessage(Message.obtain(mainHandler, MSG_ON_SERVICES_DISCOVERED, status, 0));
+            connHandler.sendMessage(Message.obtain(connHandler, MSG_ON_SERVICES_DISCOVERED, status, 0));
         }
 	}
 

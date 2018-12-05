@@ -53,7 +53,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     private BluetoothGattCharacteristic pendingCharacteristic;
     protected BluetoothAdapter bluetoothAdapter;
     protected boolean isReleased;
-    protected Handler mainHandler;
+    Handler connHandler;
+    private Handler mainHandler;
     protected ConnectionConfig config;
     private CharacteristicChangedCallback characteristicChangedCallback;
     protected Device device;
@@ -62,7 +63,8 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     BaseConnection(BluetoothDevice bluetoothDevice, ConnectionConfig config) {
         this.bluetoothDevice = bluetoothDevice;
         this.config = config;
-        mainHandler = new ConnHandler(this);
+        connHandler = new ConnHandler(this);
+        mainHandler = new Handler(Looper.getMainLooper());
         executorService = Executors.newCachedThreadPool();
     }
 
@@ -108,7 +110,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     public void release() {
         isReleased = true;
-        mainHandler.removeCallbacksAndMessages(null);
+        connHandler.removeCallbacksAndMessages(null);
         clearRequestQueueAndNotify();
     }
 
@@ -210,10 +212,10 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
                     }
                     executeNextRequest();
                 } else {
-                    mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
-                    mainHandler.sendMessageDelayed(Message.obtain(mainHandler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
+                    connHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+                    connHandler.sendMessageDelayed(Message.obtain(connHandler, MSG_REQUEST_TIMEOUT, currentRequest), config.requestTimeoutMillis);
                     try {
-                        Thread.sleep(currentRequest.writeDelay);
+                        java.lang.Thread.sleep(currentRequest.writeDelay);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
@@ -233,7 +235,17 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
         // 收到设备notify值 （设备上报值）
         onCharacteristicChanged(characteristic);
         if (characteristicChangedCallback != null) {
-            characteristicChangedCallback.onCharacteristicChanged(characteristic);
+            try {
+                Method method = characteristicChangedCallback.getClass().getMethod("onCharacteristicChanged", BluetoothGattCharacteristic.class);
+                execute(method, new Runnable() {
+                    @Override
+                    public void run() {
+                        characteristicChangedCallback.onCharacteristicChanged(characteristic);
+                    }
+                });
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -368,30 +380,42 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             executeNextRequest();
         }
     }
-    
+
     @SuppressWarnings("unchecked")
     private void handleRequestCallback(final RequestCallback callback, final Object param) {
-        Method[] methods = callback.getClass().getMethods();
-        for (Method method : methods) {
-            Class<?>[] parameterTypes = method.getParameterTypes();
-            if (parameterTypes.length == 1 && parameterTypes[0].isAssignableFrom(param.getClass())) {
-                RunInUiThread threadAnnotation = method.getAnnotation(RunInUiThread.class);
-                Runnable runnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        if (param instanceof Events.RequestFailed) {
-                            callback.onFail((Events.RequestFailed) param);
-                        } else {
-                            callback.onSuccess(param);
-                        }
-                    }
-                };
-                if (threadAnnotation != null) {
-                    mainHandler.post(runnable);
+        Method method = null;
+        try {
+              if (param instanceof Events.RequestFailed) {
+                  method = callback.getClass().getMethod("onFail", param.getClass());
+              } else {
+                  method = callback.getClass().getMethod("onSuccess", param.getClass());
+              }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        execute(method, new Runnable() {
+            @Override
+            public void run() {
+                if (param instanceof Events.RequestFailed) {
+                    callback.onFail((Events.RequestFailed) param);
                 } else {
-                    executorService.execute(runnable);
+                    callback.onSuccess(param);
                 }
-                break;
+            }
+        });
+    }
+    
+    //根据方法上是否有相应的注解，决定回调线程
+    void execute(Method method, Runnable runnable) {
+        if (method != null && runnable != null) {
+            CallOnUiThread callOnUiThreadAnnotation = method.getAnnotation(CallOnUiThread.class);
+            CallOnBackgroundThread callOnBackThreadAnnotation = method.getAnnotation(CallOnBackgroundThread.class);
+            if (callOnUiThreadAnnotation != null) {
+                mainHandler.post(runnable);
+            } else if (callOnBackThreadAnnotation != null) {
+                executorService.execute(runnable);
+            } else {
+                runnable.run();
             }
         }
     }
@@ -453,7 +477,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
      * @param enable    开启还是关闭
      */
     public void toggleNotification(@NonNull String requestId, UUID service, UUID characteristic, boolean enable, RequestCallback<Events.NotificationChanged> callback) {
-        enqueue(Request.newToggleNotificationRequest(requestId, service, characteristic, enable));
+        enqueue(Request.newToggleNotificationRequest(requestId, service, characteristic, enable, callback));
     }
 
     /**
@@ -518,7 +542,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeNextRequest() {
         synchronized (this) {
-            mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+            connHandler.removeMessages(MSG_REQUEST_TIMEOUT);
             if (requestQueue.isEmpty()) {
                 currentRequest = null;
             } else {
@@ -557,7 +581,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
 
     private void executeRequest(Request request) {
         currentRequest = request;
-        mainHandler.sendMessageDelayed(Message.obtain(mainHandler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
+        connHandler.sendMessageDelayed(Message.obtain(connHandler, MSG_REQUEST_TIMEOUT, request), config.requestTimeoutMillis);
         if (bluetoothAdapter.isEnabled()) {
             if (bluetoothGatt != null) {
                 switch (request.type) {
@@ -631,14 +655,14 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
             request.writeDelay = config.packageWriteDelayMillis;
             int packSize = config.packageSize;
             int requestWriteDelayMillis = config.requestWriteDelayMillis;
-            Thread.sleep(requestWriteDelayMillis > 0 ? requestWriteDelayMillis : request.writeDelay);
+            java.lang.Thread.sleep(requestWriteDelayMillis > 0 ? requestWriteDelayMillis : request.writeDelay);
             if (request.value.length > packSize) {
                 List<byte[]> list = BleUtils.splitPackage(request.value, packSize);
                 if (!request.waitWriteResult) {//不等待则遍历发送
                     for (int i = 0; i < list.size(); i++) {
                         byte[] bytes = list.get(i);
                         if (i > 0) {
-                            Thread.sleep(request.writeDelay);
+                            java.lang.Thread.sleep(request.writeDelay);
                         }
                         if (writeFail(characteristic, bytes)) {//写失败
                             handleWriteFailed(request);
@@ -675,7 +699,7 @@ public abstract class BaseConnection extends BluetoothGattCallback implements IC
     }
 
     private void handleWriteFailed(Request request) {
-        mainHandler.removeMessages(MSG_REQUEST_TIMEOUT);
+        connHandler.removeMessages(MSG_REQUEST_TIMEOUT);
         request.remainQueue = null;
         handleFaildCallback(request, REQUEST_FAIL_TYPE_REQUEST_FAILED, true);
     }

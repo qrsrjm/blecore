@@ -1,6 +1,7 @@
 package cn.zfs.blelib.callback;
 
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.support.annotation.NonNull;
 
 /**
  * 描述: 
@@ -11,5 +12,5 @@ public interface CharacteristicChangedCallback {
     /**
      * 收到设备notify值 （设备上报值）
      */
-    void onCharacteristicChanged(BluetoothGattCharacteristic characteristic);
+    void onCharacteristicChanged(@NonNull BluetoothGattCharacteristic characteristic);
 }

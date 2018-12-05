@@ -35,6 +35,7 @@ class MainActivity : CheckPermissionsActivity() {
         Ble.getInstance().setLogPrintLevel(BleLogger.ALL)//输出日志
         Ble.getInstance().addScanListener(scanListener)
         Ble.getInstance().bleConfig.isAcceptSysConnectedDevice = false
+        Ble.getInstance().bleConfig.isHideNonBleDevice = true
         Ble.getInstance().bleConfig.isUseBluetoothLeScanner = PreferencesUtils.getBoolean(Consts.SP_KEY_USE_NEW_SCANNER, true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             Ble.getInstance().bleConfig.scanSettings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()

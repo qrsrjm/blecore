@@ -6,11 +6,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * 描述: 在主线程执行
+ * 描述: 执行线程
  * 时间: 2018/12/4 22:58
  * 作者: zengfansheng
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.METHOD})
-public @interface RunInUiThread {
+public @interface CallOnUiThread {
+    
 }

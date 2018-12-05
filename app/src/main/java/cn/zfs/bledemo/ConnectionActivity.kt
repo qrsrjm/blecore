@@ -1,16 +1,20 @@
 package cn.zfs.bledemo
 
+import android.bluetooth.BluetoothGattCharacteristic
 import android.os.Bundle
+import android.os.Looper
 import android.support.v7.app.AppCompatActivity
-import cn.zfs.blelib.core.Ble
-import cn.zfs.blelib.core.Connection
-import cn.zfs.blelib.core.ConnectionConfig
-import cn.zfs.blelib.core.Device
+import android.util.Log
+import cn.zfs.blelib.callback.CharacteristicChangedCallback
+import cn.zfs.blelib.callback.RequestCallback
+import cn.zfs.blelib.core.*
 import cn.zfs.blelib.event.Events
+import cn.zfs.blelib.util.BleUtils
 import cn.zfs.common.utils.ToastUtils
 import kotlinx.android.synthetic.main.activity_connection.*
 import org.greenrobot.eventbus.Subscribe
 import org.greenrobot.eventbus.ThreadMode
+import java.util.*
 
 /**
  * 描述:
@@ -19,6 +23,13 @@ import org.greenrobot.eventbus.ThreadMode
  */
 class ConnectionActivity : AppCompatActivity() {
     private var device: Device? = null
+    private val UUID_SERVICE = UUID.fromString("0000ffff-0000-1000-8000-00805f9b34fb")
+    private val UUID_RX_CHAR = UUID.fromString("0000ff01-0000-1000-8000-00805f9b34fb")
+    private val UUID_NOTIFICATION_CHAR = UUID.fromString("0000ff02-0000-1000-8000-00805f9b34fb")
+
+
+    private val UUID_SERVICE_1 = UUID.fromString("00001800-0000-1000-8000-00805f9b34fb")
+    private val UUID_READ = UUID.fromString("00002a00-0000-1000-8000-00805f9b34fb")
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +69,55 @@ class ConnectionActivity : AppCompatActivity() {
                 tvState.text = "连接成功，正在发现服务..."
             }
             Connection.STATE_SERVICE_DISCOVERED -> {
-                tvState.text = "连接成功，并成功发现服务"                
+                tvState.text = "连接成功，并成功发现服务"
+                val connection = Ble.getInstance().getConnection(e.device)
+                connection.setCharacteristicChangedCallback(object : CharacteristicChangedCallback {
+                    @CallOnUiThread
+                    override fun onCharacteristicChanged(characteristic: BluetoothGattCharacteristic) {
+                        Ble.println(javaClass, Log.ERROR, "数据：${BleUtils.bytesToHexString(characteristic.value)}, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+                })
+                connection.toggleNotification("", UUID_SERVICE, UUID_NOTIFICATION_CHAR, true, object : RequestCallback<Events.NotificationChanged> {
+                    @CallOnBackgroundThread
+                    override fun onSuccess(data: Events.NotificationChanged) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onSuccess, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+
+                    override fun onFail(requestFailed: Events.RequestFailed) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onFail, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+                })
+                connection.writeCharacteristic("", UUID_SERVICE, UUID_RX_CHAR, byteArrayOf(0xa5.toByte()), object : RequestCallback<Events.CharacteristicWrite> {
+                    @CallOnUiThread
+                    override fun onSuccess(data: Events.CharacteristicWrite) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onSuccess, 数据：${BleUtils.bytesToHexString(data.characteristic.value)}, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+
+                    override fun onFail(requestFailed: Events.RequestFailed) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onFail, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+                })
+                
+                connection.readRssi("", object : RequestCallback<Events.RemoteRssiRead> {
+
+                    override fun onSuccess(data: Events.RemoteRssiRead) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onSuccess, rssi: ${data.rssi}")
+                    }
+
+                    override fun onFail(requestFailed: Events.RequestFailed) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onFail, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+                })
+                
+                connection.readCharacteristic("", UUID_SERVICE_1, UUID_READ, object : RequestCallback<Events.CharacteristicRead> {
+                    override fun onSuccess(data: Events.CharacteristicRead) {
+                        Ble.println(javaClass, Log.ERROR, "RequestCallback onSuccess, Device Name: ${String(data.characteristic.value)}, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+
+                    override fun onFail(requestFailed: Events.RequestFailed) {
+                        Ble.println(javaClass, Log.DEBUG, "RequestCallback onFail, uiThread: ${Looper.getMainLooper() == Looper.myLooper()}")
+                    }
+                })
             }
             Connection.STATE_RELEASED -> {
                 tvState.text = "连接已释放"
